@@ -16,5 +16,5 @@ LinkingTo: Rcpp, RcppArmadillo
 VignetteBuilder: knitr
 Suggests: knitr, rmarkdown, RefManageR
 NeedsCompilation: yes
-Packaged: 2018-12-26 17:40:05 UTC; matthewkoslovsky
-Built: R 3.5.1; x86_64-apple-darwin15.6.0; 2018-12-26 17:40:13 UTC; unix
+Packaged: 2018-12-26 19:44:01 UTC; matthewkoslovsky
+Built: R 3.5.1; x86_64-apple-darwin15.6.0; 2018-12-26 19:44:17 UTC; unix
