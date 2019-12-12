@@ -5,3 +5,11 @@ DTMbvs <- function(iterations, thin, prior, x, branch_location, node_children_po
     .Call(`_DTMbvs_DTMbvs`, iterations, thin, prior, x, branch_location, node_children_pointer, branch_counts, subtree_counts, alpha, phi, zeta, sigma2_alpha, sigma2_phi, aa, bb, Omega, G, Var, S, v0, v1, a_G, b_G, pie, lambda)
 }
 
+dmbvs_ss <- function(XX, YY, alpha, beta, mu_al, sig_al, mu_be, sig_be, aa_hp, bb_hp, prop_per_alpha, prop_per_beta, GG, thin, Log) {
+    .Call(`_DTMbvs_dmbvs_ss`, XX, YY, alpha, beta, mu_al, sig_al, mu_be, sig_be, aa_hp, bb_hp, prop_per_alpha, prop_per_beta, GG, thin, Log)
+}
+
+dmbvs_gibbs <- function(XX, YY, alpha, beta, mu_al, sig_al, mu_be, sig_be, aa_hp, bb_hp, prop_per_alpha, prop_per_beta, GG, thin, Log) {
+    .Call(`_DTMbvs_dmbvs_gibbs`, XX, YY, alpha, beta, mu_al, sig_al, mu_be, sig_be, aa_hp, bb_hp, prop_per_alpha, prop_per_beta, GG, thin, Log)
+}
+

@@ -183,7 +183,7 @@ DTMbvs_R <- function( iterations = 50000, thin = 10, tree = NULL, Y = NULL, X = 
 
   # Initiate starting values and allocate memory
   samples <- floor( iterations/thin )
-
+ 
   # Intercept term alpha_j
   alpha. <- matrix( 0, nrow = branches, ncol = samples )
 
