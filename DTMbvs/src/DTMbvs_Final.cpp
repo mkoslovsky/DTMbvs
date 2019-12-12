@@ -1526,8 +1526,8 @@ List dmbvs_ss( arma::mat XX, arma::mat YY, arma::vec alpha, arma::vec beta,
 
 
 // Function :: MCMC algorithm
-// [[Rcpp::export]]
 // Principal function using Gibbs variable selection
+// [[Rcpp::export]]
 List dmbvs_gibbs(arma::mat XX, arma::mat YY, arma::vec alpha, arma::vec beta,
                  arma::vec mu_al, arma::vec sig_al , arma::mat mu_be, arma::mat sig_be,
                  double aa_hp, double bb_hp, arma::vec prop_per_alpha,
