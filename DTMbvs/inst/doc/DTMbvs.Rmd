@@ -1,7 +1,7 @@
 ---
 title: "DTMbvs Vignette"
 author: "Matt Koslovsky and Marina Vannucci"
-output: rmarkdown::html_vignette
+output:  pdf_document
 vignette: >
   %\VignetteIndexEntry{DTMbvs: Dirichlet-Tree Multinomial Regression Models with Bayesian Variable Selection for Microbiome Data - an R Package}
   %\VignetteEngine{knitr::rmarkdown}
@@ -234,6 +234,10 @@ bfdr_selected <- selected( test, burnin = 2500, threshold = bfdr_threshold, edge
 library(knitr)
 kable(bfdr_selected$selected_name, align = 'c')
 ```
+
+### Dirichlet-multinomial model
+Additionally, this package contains functions to perform variable selection for Dirichlet-multinomial regression models, a special case of the Dirichlet-tree multinomial model in which the number of branches equals the number of leaves in the tree. The methods and functions previously developed by `r Cite(bib, "wadsworth2017integrative")` are incorporated into this package. As mentioned in the main manuscript, we recommend using this model for data sets with more than 100 compositional components. Using the `simulate_DM()` function, users can simulate data following a Dirichlet-multinomial regression model with user specified numbers of observations, taxa leaves, and regression coefficients. To identify covariates associated with each branch, use the `DMbvs_R()` function. By default, the function runs for *5,000* iterations, thinning by every *10*$^{th}$ iteration. Initial values for the $L$ - dimensional vector of intercept terms, $\boldsymbol{\alpha}$, and $P \times L$ - dimensional vector of regression coefficients $\boldsymbol{\beta}$ can be set by the user, set to default ($\boldsymbol{\alpha}_{init} = \boldsymbol{\beta}_{init} = 0$), or warmstarted (`warmstart = TRUE`), similar as above. The prior variance for both $\boldsymbol{\alpha}$ and $\boldsymbol{\beta}$ can be controlled via `sigma2_alpha` and `sigma2_beta`, respectively. The prior probability of inclusion hyperparamters for the beta-binomial distribution are set to `aa = 0.1` and `bb = 1.9` by default. There are two options for the MCMC algorithm, `MCMC = Gibbs` and `MCMC = SSVS`. The `SSVS` version is much faster per each iteration, but may require more iterations for convergance compared to the `Gibbs` algorithm. The output of this function contains the MCMC iterations for $\boldsymbol{\alpha}$ and $\boldsymbol{\beta}$, which can be processed using the `selectedDM()`, similar to the `selected()` function above. 
+
 
 # Conclusion
 This vignette demonstrates how to perform Bayesian variable selection for Dirichlet-tree multinomial regression models. The package accommodates Dirichlet-multinomial regression as a special case and is flexible to various inclusion priors. Additionally, we provide additional functionality for simulating data and performing posterior inference. We welcome any comments that will improve upon the existing package and tutorial. 
