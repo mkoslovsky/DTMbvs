@@ -1,6 +1,6 @@
 # This function can be used to simulate DM data.
 # Taken from Wadsworth (2017) An integrative Bayesian Dirichlet-multinomial regression model for the analysis of taxonomic abundances in microbiome data
-simulate_dirichlet_multinomial_regression = function(n_obs = 100,
+simulate_DM = function(n_obs = 100,
                                                      n_vars = 100,
                                                      n_taxa = 40,
                                                      n_relevant_vars = 4,
