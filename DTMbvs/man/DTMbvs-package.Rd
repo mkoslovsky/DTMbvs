@@ -72,4 +72,3 @@ Matthew Koslovsky email: mkoslovsky12@gmail.com
 \examples{
 run <- DTMbvs_R()
 output <- selected( run, plotting = TRUE )
-
