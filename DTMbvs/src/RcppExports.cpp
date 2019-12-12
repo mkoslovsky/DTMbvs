@@ -41,9 +41,61 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// dmbvs_ss
+List dmbvs_ss(arma::mat XX, arma::mat YY, arma::vec alpha, arma::vec beta, arma::vec mu_al, arma::vec sig_al, arma::mat mu_be, arma::mat sig_be, double aa_hp, double bb_hp, arma::vec prop_per_alpha, arma::vec prop_per_beta, int GG, int thin, int Log);
+RcppExport SEXP _DTMbvs_dmbvs_ss(SEXP XXSEXP, SEXP YYSEXP, SEXP alphaSEXP, SEXP betaSEXP, SEXP mu_alSEXP, SEXP sig_alSEXP, SEXP mu_beSEXP, SEXP sig_beSEXP, SEXP aa_hpSEXP, SEXP bb_hpSEXP, SEXP prop_per_alphaSEXP, SEXP prop_per_betaSEXP, SEXP GGSEXP, SEXP thinSEXP, SEXP LogSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type XX(XXSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type YY(YYSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type beta(betaSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type mu_al(mu_alSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type sig_al(sig_alSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type mu_be(mu_beSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type sig_be(sig_beSEXP);
+    Rcpp::traits::input_parameter< double >::type aa_hp(aa_hpSEXP);
+    Rcpp::traits::input_parameter< double >::type bb_hp(bb_hpSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type prop_per_alpha(prop_per_alphaSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type prop_per_beta(prop_per_betaSEXP);
+    Rcpp::traits::input_parameter< int >::type GG(GGSEXP);
+    Rcpp::traits::input_parameter< int >::type thin(thinSEXP);
+    Rcpp::traits::input_parameter< int >::type Log(LogSEXP);
+    rcpp_result_gen = Rcpp::wrap(dmbvs_ss(XX, YY, alpha, beta, mu_al, sig_al, mu_be, sig_be, aa_hp, bb_hp, prop_per_alpha, prop_per_beta, GG, thin, Log));
+    return rcpp_result_gen;
+END_RCPP
+}
+// dmbvs_gibbs
+// Principal function using Gibbs variable selection List dmbvs_gibbs(arma::mat XX, arma::mat YY, arma::vec alpha, arma::vec beta, arma::vec mu_al, arma::vec sig_al, arma::mat mu_be, arma::mat sig_be, double aa_hp, double bb_hp, arma::vec prop_per_alpha, arma::vec prop_per_beta, int GG, int thin, int Log);
+RcppExport SEXP _DTMbvs_dmbvs_gibbs(SEXP XXSEXP, SEXP YYSEXP, SEXP alphaSEXP, SEXP betaSEXP, SEXP mu_alSEXP, SEXP sig_alSEXP, SEXP mu_beSEXP, SEXP sig_beSEXP, SEXP aa_hpSEXP, SEXP bb_hpSEXP, SEXP prop_per_alphaSEXP, SEXP prop_per_betaSEXP, SEXP GGSEXP, SEXP thinSEXP, SEXP LogSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type XX(XXSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type YY(YYSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type beta(betaSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type mu_al(mu_alSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type sig_al(sig_alSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type mu_be(mu_beSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type sig_be(sig_beSEXP);
+    Rcpp::traits::input_parameter< double >::type aa_hp(aa_hpSEXP);
+    Rcpp::traits::input_parameter< double >::type bb_hp(bb_hpSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type prop_per_alpha(prop_per_alphaSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type prop_per_beta(prop_per_betaSEXP);
+    Rcpp::traits::input_parameter< int >::type GG(GGSEXP);
+    Rcpp::traits::input_parameter< int >::type thin(thinSEXP);
+    Rcpp::traits::input_parameter< int >::type Log(LogSEXP);
+    rcpp_result_gen = Rcpp::wrap(dmbvs_gibbs(XX, YY, alpha, beta, mu_al, sig_al, mu_be, sig_be, aa_hp, bb_hp, prop_per_alpha, prop_per_beta, GG, thin, Log));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_DTMbvs_DTMbvs", (DL_FUNC) &_DTMbvs_DTMbvs, 25},
+    {"_DTMbvs_dmbvs_ss", (DL_FUNC) &_DTMbvs_dmbvs_ss, 15},
+    {"_DTMbvs_dmbvs_gibbs", (DL_FUNC) &_DTMbvs_dmbvs_gibbs, 15},
     {NULL, NULL, 0}
 };
 

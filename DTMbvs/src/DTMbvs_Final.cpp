@@ -8,6 +8,8 @@
 //[[Rcpp::depends(RcppArmadillo)]]
 using namespace Rcpp;
 using namespace arma;
+#include <math.h>
+
 // [[Rcpp::plugins("cpp11")]]
 
 // Define helper functions
@@ -796,6 +798,388 @@ arma::mat Omega_update_cpp(
   return Omega_update;
 }
 
+// sort of following http://www.johndcook.com/blog/standard_deviation/
+double online_mean( int iteration, double last_mean, double curr_obs ){
+  
+  // don't fall off by one
+  int n_vals = iteration++ ;
+  
+  // assume that iteration > 0 since there's a burnin proposal
+  double curr_mean = last_mean + (curr_obs - last_mean)/(double)n_vals;
+  
+  return( curr_mean );
+}
+
+// Calculate online variance for adaptive sampler 
+double online_var( int iteration, double last_mean, double last_var, double curr_mean, double curr_obs ){
+  
+  // note that iteration == n - 1 and that (n - 1) * last_var == last_ss
+  // assume that iteration > 0 since there's a burnin proposal
+  double curr_ss = (double)iteration * last_var + (curr_obs - last_mean) * (curr_obs - curr_mean);
+  
+  return( curr_ss/(double)iteration );
+}
+
+// simple adaptive MH proposal
+// this uses equation (3) from Roberts & Rosenthal (2009) but without the full
+// covariance of the target which makes it similar to the component-wise update
+// of Haario et al. (2005)
+double adap_prop( double curr_var, int n_cats, int n_vars ){
+  
+  // need dimension (???)
+  double dd = (double)n_cats * (double)n_vars;
+  
+  // ensures bounded convergence
+  int safeguard =  rbinom( 1, 1, 0.05 )[ 0 ];
+  double usually = pow( 2.38, 2.0 ) * curr_var/dd;
+  double unusually = pow( 0.1, 2.0 )/dd;
+  
+  double prop_var = (1 - safeguard) * rnorm( 1, 0, pow( usually, 0.5 ) )[ 0 ]  + safeguard * rnorm( 1, 0, pow( unusually, 0.5 ) )[ 0 ];
+  
+  return(prop_var);
+}
+
+// log Beta-Bernoulli spike-and-slab prior evaluation
+double lprior_bbsas( double betajk, int sjk, double sig_bejk, double mu_bejk, double aa_hp, double bb_hp){
+  
+  // calculate additional beta factor
+  double aa = sjk + aa_hp;
+  double bb = 1 - sjk + bb_hp;
+  double lbeta_factor = R::lbeta( aa, bb )  - R::lbeta( aa_hp, bb_hp );
+  
+  // piece-wise function
+  if( sjk == 0 ){
+    return( log( 1.0 - exp( lbeta_factor) ) );
+  } else{
+    return( lbeta_factor - 0.5 * log( 2.0 * M_PI * sig_bejk ) - 1.0/( 2.0 * sig_bejk)  * pow( betajk - mu_bejk, 2.0 ) );
+  }
+}
+
+// calculates the linear predictor for each category of the Dirichlet-Multinomial
+double calculate_gamma(arma::mat XX, arma::vec alpha, arma::vec beta, int jj, int ii, int Log, int n_vars){
+  
+  // loop indices and out
+  int hh = 0;
+  double out;
+  
+  out = alpha[ jj ];
+  for( int kk = 0 ; kk < n_vars ; ++kk){
+    
+    hh = kk + jj * n_vars;
+    out = out + beta[ hh ] * XX( ii, kk );
+  }
+  
+  if(Log == 1){
+    return(out);
+  }else{
+    return( exp( out ) ) ;
+  }
+}
+
+
+// MH update for the regression parameters, Gibbs version
+List update_beta_jj( arma::mat XX, arma::mat JJ, arma::mat loggamma,
+                     arma::vec beta_temp, arma::vec inclusion_indicator,
+                     arma::vec prop_per_beta, arma::mat mu_be, arma::mat sig_be , double aa_hp, double bb_hp, int jj, int n_vars ){
+  
+  // this function loops through n_vars so it is called for one taxa at a time
+  int n_cats = JJ.n_cols; 
+  int n_obs = XX.n_rows;
+  double sig_prop;
+  arma::vec loggamma_p( n_obs );
+  loggamma_p.zeros();
+  int hh, ii, kk;
+  
+  // define proposal variable and acceptance ratio variables
+  double beta_p;
+  double lnu, ln_acp;
+  
+  double log_full_beta, log_full_beta_p;
+  
+  for( kk = 0 ; kk < n_vars ; ++kk){
+    
+    // Stride for full (n_vars * n_cats) vector
+    hh = kk + jj * n_vars;
+    
+    if( inclusion_indicator[hh] == 1 ){
+      
+      log_full_beta = 0;
+      
+      for( ii = 0 ; ii < n_obs ; ++ii ){
+        log_full_beta = log_full_beta - lgamma( exp( loggamma( ii, jj ) ) );
+        log_full_beta = log_full_beta + exp( loggamma( ii, jj ) ) * log( JJ( ii, jj ) );
+      }
+      
+      log_full_beta = log_full_beta + lprior_bbsas( beta_temp[ kk ], inclusion_indicator[ hh ], sig_be( jj, kk ), mu_be( jj, kk ), aa_hp, bb_hp );
+      sig_prop = prop_per_beta[ hh ];
+      beta_p = beta_temp[ kk ] + help::adap_prop( sig_prop, n_cats, n_vars  );
+      
+      
+      for( ii = 0 ; ii < n_obs ; ++ii ){
+        loggamma_p[ ii ] = loggamma( ii, jj ) - beta_temp[ kk ] * XX( ii, kk ) + beta_p * XX( ii, kk );
+      }
+      
+      // calculate proposal probability
+      log_full_beta_p = 0;
+      for( ii = 0 ; ii < n_obs ; ++ii ){
+        log_full_beta_p = log_full_beta_p - lgamma( exp( loggamma_p[ ii ] ) );
+        log_full_beta_p = log_full_beta_p + exp( loggamma_p[ ii ] ) * log( JJ( ii, jj ) );
+      }
+      log_full_beta_p = log_full_beta_p + lprior_bbsas( beta_p, inclusion_indicator[ hh ], sig_be( jj, kk ), mu_be( jj, kk ), aa_hp, bb_hp );
+      
+      ln_acp = log_full_beta_p - log_full_beta;
+      lnu = log( runif( 1 )[ 0 ] );
+      
+      if(lnu < ln_acp){
+        
+        beta_temp[ kk ] = beta_p;
+        
+        for( ii = 0 ; ii < n_obs ; ++ii ){
+          
+          loggamma( ii, jj ) = loggamma_p[ ii ];
+          
+        }
+        
+      } // Close MH accept
+    } // Close inclusion_indicator[hh] == 1
+  } // Close for kk
+  // Return output
+  List out( 2 );
+  out[ 0 ] = beta_temp;
+  out[ 1 ] = loggamma;
+  return out ;
+  
+} // Close function
+
+
+// MH update for the regression parameters, stochastic search version
+List update_beta_jj_ss( arma::mat XX, arma::mat JJ, arma::mat loggamma,
+                        arma::vec beta_temp, arma::vec inclusion_indicator,
+                        arma::vec prop_per_beta, arma::mat mu_be, arma::mat sig_be, double aa_hp, double bb_hp, int jj, int n_vars ){
+  
+  // this function loops through n_vars so it is called for one taxa at a time
+  int n_cats = JJ.n_cols; 
+  int n_obs = XX.n_rows;
+  double sig_prop;
+  arma::vec loggamma_p( n_obs );
+  loggamma_p.zeros();
+  int hh, ii, kk;
+  
+  // define proposal variable and acceptance ratio variables
+  double beta_p;
+  double lnu, ln_acp;
+  
+  double log_full_beta, log_full_beta_p;
+  
+  kk = floor( runif( 1 )[ 0 ] * n_vars);//for(kk = 0 ; kk < n_vars ; kk++){
+  
+  // Stride for full (n_vars * n_cats) vector
+  hh = kk + jj * n_vars;
+  
+  if( inclusion_indicator[ hh ] == 1 ){
+    
+    log_full_beta = 0;
+    
+    for(ii = 0 ; ii < n_obs ; ++ii){
+      log_full_beta = log_full_beta - lgamma( exp( loggamma( ii, jj ) ) ) ;
+      log_full_beta = log_full_beta + exp( loggamma( ii, jj ) ) * log( JJ( ii, jj ) );
+    }
+    
+    log_full_beta = log_full_beta + lprior_bbsas( beta_temp[ kk ], inclusion_indicator[ hh ], sig_be( jj, kk ), mu_be( jj, kk ), aa_hp, bb_hp );
+    
+    sig_prop = prop_per_beta[ hh ];
+    beta_p = beta_temp[ kk ] + help::adap_prop( sig_prop, n_cats, n_vars  );
+    
+    
+    for( ii = 0 ; ii < n_obs ; ++ii){
+      loggamma_p[ii] = loggamma( ii, jj ) - beta_temp[ kk ] * XX( ii, kk ) + beta_p * XX( ii, kk );
+    }
+    
+    // calculate proposal probability
+    log_full_beta_p = 0;
+    for( ii = 0 ; ii < n_obs ; ii++ ){
+      log_full_beta_p = log_full_beta_p - lgamma( exp( loggamma_p[ ii ] ) );
+      log_full_beta_p = log_full_beta_p + exp( loggamma_p[ii] ) * log( JJ( ii, jj ) ) ;
+    }
+    log_full_beta_p = log_full_beta_p + help::lprior_bbsas( beta_p, inclusion_indicator[ hh ], sig_be( jj, kk ), mu_be( jj, kk ), aa_hp, bb_hp );
+    
+    ln_acp = log_full_beta_p - log_full_beta;
+    lnu = log( runif( 1 )[ 0 ] );
+    
+    if(lnu < ln_acp){
+      
+      beta_temp[ kk ] = beta_p;
+      
+      for( ii = 0 ; ii < n_obs ; ++ii ){
+        
+        loggamma( ii, jj ) = loggamma_p[ ii ];
+        
+      }
+      
+    } // Close MH accept
+  } // Close inclusion_indicator[hh] == 1
+  
+  // Return output
+  List out( 2 );
+  out[ 0 ] = beta_temp;
+  out[ 1 ] = loggamma;
+  return out ;
+  
+  //} // Close for kk
+} // Close function
+
+// MH update for the intercept parameters
+List update_alpha_jj( arma::mat JJ, arma::mat loggamma, arma::vec alpha, arma::vec prop_per_alpha, arma::vec mu_al, arma::vec sig_al, int jj){
+  
+  int ii;
+  
+  double sig_prop = prop_per_alpha[ jj ];
+  int n_obs = loggamma.n_rows;
+  arma::vec loggamma_p(n_obs);
+  loggamma_p.zeros();
+  
+  double alpha_p;
+  double lnu, ln_acp;
+  
+  // Prepare the current and proposed full conditional values
+  double log_full_alpha, log_full_alpha_p;
+  
+  // Calculate the full conditional for the current value
+  log_full_alpha = 0;
+  for( ii = 0 ; ii < n_obs ; ++ii ){
+    
+    log_full_alpha = log_full_alpha - lgamma( exp( loggamma( ii, jj ) ) );
+    log_full_alpha = log_full_alpha + exp( loggamma( ii, jj ) ) * log( JJ( ii, jj ) );
+    
+  }
+  
+  log_full_alpha = log_full_alpha - 1.0/( 2.0 * sig_al[ jj ] ) * pow( alpha[ jj ] - mu_al[ jj ], 2.0 );
+  
+  // Propose a new value for alpha[jj] using a random walk proposal centered on
+  // the current value of alpha[jj]
+  alpha_p = alpha[ jj ] + rnorm( 1, 0, sig_prop )[ 0 ];
+  
+  // Gamma must be updated too
+  for(ii = 0 ; ii < n_obs ; ii++){
+    loggamma_p[ ii ] = loggamma( ii, jj ) - alpha[ jj ] + alpha_p;
+  }
+  
+  // Calculate the full conditional for the proposed value
+  log_full_alpha_p = 0;
+  for( ii = 0 ; ii < n_obs ; ++ii ){
+    log_full_alpha_p = log_full_alpha_p - lgamma( exp( loggamma_p[ ii ] ) );
+    log_full_alpha_p = log_full_alpha_p + exp( loggamma_p[ ii ] ) * log( JJ( ii, jj ) );
+  }
+  
+  log_full_alpha_p = log_full_alpha_p - 1.0/(2.0 * sig_al[ jj ] ) * pow( alpha_p - mu_al[ jj ], 2.0);
+  ln_acp = log_full_alpha_p - log_full_alpha;
+  lnu = log( runif( 1 )[ 0 ] );
+  
+  if(lnu < ln_acp){
+    
+    // If accepted, update both alpha[jj] and loggamma[ii][jj], and keep
+    alpha[ jj ] = alpha_p;
+    
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      loggamma( ii, jj ) = loggamma_p[ ii ];
+    }
+  }
+  
+  // Return output
+  List out( 2 );
+  out[ 0 ] = alpha;
+  out[ 1 ] = loggamma;
+  return out ;
+} // Close function
+
+
+// for the Savitsky et al. inclusion proposal step
+List between_models_jj( arma::mat XX, arma::mat JJ, arma::mat loggamma,
+                        arma::vec beta_temp, arma::vec inclusion_indicator, arma::mat mu_be, 
+                        arma::mat sig_be, double aa_hp, double bb_hp, int jj ){
+  
+  // Metropolis-Hastings proposals
+  int n_vars = XX.n_cols;
+  double sig_prop;
+  double mu_prop;
+  
+  int hh, kk, ii;
+  
+  // proposed value vectors
+  int inclusion_indicator_p;
+  int n_obs = XX.n_rows;
+  arma::vec loggamma_p( n_obs );
+  loggamma_p.zeros();
+  double beta_p;
+  
+  // acceptance ratio variables
+  double lnu, ln_acp;
+  
+  // must update beta_jk for kk = 1, ..., n_vars
+  double log_full_beta, log_full_beta_p;
+  
+  for( kk = 0 ; kk < n_vars ; ++kk ){
+    
+    hh = kk + jj * n_vars;
+    
+    // calculate the current log full conditional
+    log_full_beta = 0;
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      log_full_beta = log_full_beta - lgamma( exp( loggamma( ii, jj ) ) );
+      log_full_beta = log_full_beta + exp( loggamma( ii, jj ) ) * log( JJ( ii, jj ) );
+    }
+    log_full_beta = log_full_beta + help::lprior_bbsas( beta_temp[ kk ], inclusion_indicator[ hh ], sig_be( jj, kk ), mu_be( jj, kk ), aa_hp, bb_hp );
+    
+    // proposing a new value for beta[jj][kk] using the prior mean and standard deviation
+    
+    sig_prop = pow( sig_be( jj, kk ), 0.5);
+    mu_prop = mu_be( jj, kk );
+    
+    // swap and sample beta
+    if( inclusion_indicator[ hh ] == 0 ){
+      beta_p = mu_prop + rnorm( 1, 0, sig_prop)[ 0 ];
+      inclusion_indicator_p = 1;
+    }else{
+      beta_p = 0.0;
+      inclusion_indicator_p = 0;
+    }
+    
+    // update proposal gamma (linear predictor)
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      loggamma_p[ ii ] = loggamma( ii, jj ) - beta_temp[ kk ] * XX( ii, kk ) + beta_p * XX( ii, kk );
+    }
+    
+    // calculate the proposed log full conditional
+    log_full_beta_p = 0;
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      log_full_beta_p = log_full_beta_p - lgamma( exp( loggamma_p[ ii ] ) );
+      log_full_beta_p = log_full_beta_p + exp( loggamma_p[ ii ] ) * log( JJ( ii, jj ) );
+    }
+    log_full_beta_p = log_full_beta_p + lprior_bbsas( beta_p, inclusion_indicator_p, sig_be( jj, kk ), mu_be( jj, kk ), aa_hp, bb_hp );
+    
+    ln_acp = log_full_beta_p - log_full_beta;
+    lnu = log( runif( 1 )[ 0 ] );
+    
+    // Metropolis-Hastings ratio
+    if( lnu < ln_acp ){
+      
+      // update accepted beta into beta_temp
+      beta_temp[ kk ] = beta_p;
+      inclusion_indicator[ hh ] = inclusion_indicator_p;
+      
+      for(ii = 0 ; ii < n_obs ; ii++){
+        // also update the gamma (linear predictor)
+        loggamma( ii, jj ) = loggamma_p[ ii ];
+      }
+    } // Close MH if
+  } // Close for kk
+  // Return output
+  List out( 3 );
+  out[ 0 ] = beta_temp;
+  out[ 1 ] = inclusion_indicator;
+  out[ 2 ] = loggamma;
+  return out;
+} // Close function
 
 } // For namespace 'help'
 
@@ -921,4 +1305,440 @@ List DTMbvs(
     return output ;
 }
 
+// SSVS Sampler function
+// [[Rcpp::export]]
+List dmbvs_ss( arma::mat XX, arma::mat YY, arma::vec alpha, arma::vec beta,
+               arma::vec mu_al, arma::vec sig_al,
+               arma::mat mu_be, arma::mat sig_be,
+               double aa_hp, double bb_hp, arma::vec prop_per_alpha,
+               arma::vec prop_per_beta, int GG,
+               int thin, int Log ){
+  
+  // loop indices
+  int hh, ii, jj, kk, gg;
+  
+  // adaptive proposal values
+  double last_mean;
+  double last_var;
+  
+  ///////// Initialize variables that don't require input or can be obtained
+  ///////// from inputs
+  
+  int n_vars = XX.n_cols;
+  int n_cats = YY.n_cols;
+  int n_obs = YY.n_rows;
+  
+  // for adaptive MH need to keep track of target density mean and variance
+  arma::vec curr_mean( n_vars * n_cats );
+  arma::vec curr_var( n_vars * n_cats );
+  
+  curr_mean.zeros();
+  curr_var.zeros();
+  for( hh = 0 ; hh < (n_vars * n_cats) ; ++hh){
+    curr_var[ hh ] = 0.5;
+  }
+  
+  // variable inclusion indicator
+  arma::vec inclusion_indicator( n_vars * n_cats );
+  inclusion_indicator.zeros();
+  
+  for(hh = 0 ; hh < (n_vars * n_cats) ; ++hh){
+    if( beta[ hh ] == 0 ){
+      inclusion_indicator[ hh ] = 0;
+    }else{
+      inclusion_indicator[ hh ] = 1;
+    }
+  }
+  
+  // row sums of YY
+  arma::vec Ypiu( n_obs );
+  Ypiu.zeros();
+  
+  for( ii = 0 ; ii < n_obs ; ++ii){
+    for(jj = 0 ; jj < n_cats ; ++jj){
+      Ypiu[ ii ] = Ypiu[ ii ] + YY( ii, jj );
+    }
+  }
+  
+  // the beta_temp vector is an n_vars long vector used for updating each of the
+  // jj-th rows in Beta corresponding the jj-th category in YY
+  arma::vec beta_temp( n_vars);
+  beta_temp.zeros(); 
+  
+  // the linear predictor matrix, represented as a vector, is in the log scale
+  arma::mat loggamma( n_obs, n_cats );
+  loggamma.zeros();
+  for( ii = 0 ; ii < n_obs ; ++ii ){
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      loggamma( ii, jj ) = help::calculate_gamma( XX, alpha, beta, jj, ii, Log, n_vars );
+    }
+  }
+  
+  // initialize latent variable: JJ ~ gamma()
+  arma::mat JJ( n_obs, n_cats );
+  JJ.zeros();
+  // TT is the vector of normalization constants
+  arma::vec TT( n_obs );
+  TT.zeros();
+  
+  for( ii = 0 ; ii < n_obs ; ++ii ){
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      JJ( ii, jj ) =  YY( ii, jj );
+      // a very small number
+      if( JJ( ii, jj )  < pow(10.0, -100.0 ) ){
+        JJ( ii, jj ) = pow(10.0, -100.0);
+      }
+      TT[ ii ] = TT[ ii ] + JJ( ii, jj );
+    }
+  }
+  
+  // initialize the other clever latent variable: uu
+  // note that this uses the data to initialize
+  arma::vec uu( n_obs );
+  uu.zeros();
+  for(ii = 0 ; ii < n_obs ; ++ii){
+    uu[ ii ] = rgamma( 1, Ypiu[ ii ], 1/TT[ ii ])[ 0 ] ;
+  }
+  
+  arma::mat out_alpha( n_cats, floor( GG/thin ) ); 
+  arma::mat out_beta( n_cats*n_vars , floor( GG/thin ) ); 
+  
+  out_alpha.zeros();
+  out_beta.zeros();
+  
+  // the magic starts here
+  List between_return( 3 );
+  List beta_return( 2 );
+  List alpha_return( 2 );
+  
+  for( gg = 0 ; gg < GG ; ++gg){
+    
+    // Print out progress
+    double printer = gg % 250;
+    
+    if( printer == 0 ){
+      Rcpp::Rcout << "Iteration = " << gg << std::endl;
+    }
+    
+    // first a round of the between-model step for every covariate within every taxa
+    jj = floor( runif( 1 )[ 0 ] * n_cats);
+    
+    // fill in beta_temp
+    for( kk = 0 ; kk < n_vars ; ++kk ){
+      hh = kk + jj * n_vars;
+      beta_temp[ kk ] = beta[ hh ];
+    }
+    
+    between_return = help::between_models_jj(XX, JJ, loggamma, beta_temp,
+                                             inclusion_indicator, mu_be, sig_be, aa_hp, bb_hp, jj);
+    
+    beta_temp = as<arma::vec>( between_return[ 0 ] );
+    inclusion_indicator = as<arma::vec>( between_return[ 1 ] );
+    loggamma = as<arma::mat>( between_return[ 2 ] );
+    
+    // update beta with beta_temp
+    for( kk = 0 ; kk < n_vars ; ++kk ){
+      hh = kk + jj * n_vars;
+      beta[ hh ] = beta_temp[ kk ];
+    }
+    //}
+    
+    // now an accelerating within-model step
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      
+      // fill in beta_temp and update the proposal variance
+      for( kk = 0 ; kk < n_vars ; ++kk ){
+        hh = kk + jj * n_vars;
+        beta_temp[ kk ] = beta[ hh ];
+        // wait until each parameter has had a few iterations
+        if( gg > 2 * n_vars * n_cats ){
+          // calculate the online variance
+          last_mean = curr_mean[ hh ];
+          last_var = curr_var[ hh ];
+          curr_mean[ hh ] = help::online_mean( gg, last_mean, beta[ hh ] );
+          curr_var[ hh ] = help::online_var( gg, last_mean, last_var, curr_mean[ hh ], beta[ hh ] );
+          // update proposal variance
+          prop_per_beta[ hh ] = curr_var[ hh ];
+        }
+      }
+      
+      beta_return = help::update_beta_jj_ss(XX, JJ, loggamma, beta_temp, inclusion_indicator,
+                                            prop_per_beta, mu_be, sig_be, aa_hp, bb_hp, jj, n_vars );
+      
+      beta_temp = as<arma::vec>( beta_return[ 0 ] );
+      loggamma = as<arma::mat>( beta_return[ 1 ] );
+      
+      // update beta with beta_temp and write to file
+      for( kk = 0 ; kk < n_vars ; ++kk ){
+        hh = kk + jj * n_vars;
+        beta[ hh ] = beta_temp[ kk ];
+      }
+    }
+    
+    
+    // update alpha and write to file
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      
+      alpha_return = help::update_alpha_jj(JJ, loggamma, alpha, prop_per_alpha,
+                                           mu_al, sig_al, jj);
+      alpha = as<arma::vec>( alpha_return[ 0 ] );
+      loggamma = as<arma::mat>( alpha_return[ 1 ] );
+      
+    }
+    
+    // update JJ and consequently TT
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      TT[ ii ] = 0.0;
+      for( jj = 0 ; jj < n_cats ; ++jj ){
+        JJ( ii, jj ) = rgamma(1, YY( ii, jj ) + exp(loggamma( ii, jj )), 1/(uu[ii] + 1.0) )[ 0 ] ;
+        if(JJ( ii, jj ) < pow(10.0, -100.0)){
+          JJ( ii, jj ) = pow(10.0, -100.0);
+        }
+        TT[ ii ] = TT[ ii ] + JJ( ii, jj );
+      }
+    }
+    
+    // update latent variables uu
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      uu[ ii ] = rgamma( 1, Ypiu[ii], 1/TT[ ii ])[ 0 ];
+    }
+    
+    
+    if( ( gg + 1 ) % thin == 0 ){
+      out_alpha.col( ( gg + 1 )/thin - 1  ) = alpha;
+      out_beta.col( ( gg + 1 )/thin - 1  ) = beta;
+    }
+    
+
+    
+  } // end of iterations
+  
+  
+  // Return output
+  List output( 2 );
+  output[ 0 ] = out_alpha;
+  output[ 1 ] = out_beta;
+  
+  return output ;
+  
+} // close SSVS sampler function
+
+
+
+// Function :: MCMC algorithm
+// [[Rcpp::export]]
+// Principal function using Gibbs variable selection
+List dmbvs_gibbs(arma::mat XX, arma::mat YY, arma::vec alpha, arma::vec beta,
+                 arma::vec mu_al, arma::vec sig_al , arma::mat mu_be, arma::mat sig_be,
+                 double aa_hp, double bb_hp, arma::vec prop_per_alpha,
+                 arma::vec prop_per_beta, int GG,
+                 int thin, int Log ){
+  
+  // loop indices
+  int hh, ii, jj, kk, gg;
+  
+  // adaptive proposal values
+  double last_mean;
+  double last_var;
+  
+  ///////// Initialize variables that don't require input or can be obtained
+  ///////// from inputs
+  int n_vars = XX.n_cols;
+  int n_cats = YY.n_cols;
+  int n_obs = YY.n_rows;
+  
+  // for adaptive MH need to keep track of target density mean and variance
+  arma::vec curr_mean( n_vars * n_cats );
+  arma::vec curr_var( n_vars * n_cats );
+  
+  curr_mean.zeros();
+  curr_var.zeros();
+  for( hh = 0 ; hh < (n_vars * n_cats) ; ++hh){
+    curr_var[ hh ] = 0.5;
+  }
+  
+  // variable inclusion indicator
+  arma::vec inclusion_indicator( n_vars * n_cats );
+  inclusion_indicator.zeros();
+  
+  for(hh = 0 ; hh < (n_vars * n_cats) ; ++hh){
+    if( beta[ hh ] == 0 ){
+      inclusion_indicator[ hh ] = 0;
+    }else{
+      inclusion_indicator[ hh ] = 1;
+    }
+  }
+  
+  // row sums of YY
+  arma::vec Ypiu( n_obs );
+  Ypiu.zeros();
+  
+  for( ii = 0 ; ii < n_obs ; ++ii){
+    for(jj = 0 ; jj < n_cats ; ++jj){
+      Ypiu[ ii ] = Ypiu[ ii ] + YY( ii, jj );
+    }
+  }
+  
+  // the beta_temp vector is an n_vars long vector used for updating each of the
+  // jj-th rows in Beta corresponding the jj-th category in YY
+  arma::vec beta_temp( n_vars);
+  beta_temp.zeros(); 
+  
+  // the linear predictor matrix, represented as a vector, is in the log scale
+  arma::mat loggamma( n_obs, n_cats );
+  loggamma.zeros();
+  for( ii = 0 ; ii < n_obs ; ++ii ){
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      loggamma( ii, jj ) = help::calculate_gamma( XX, alpha, beta, jj, ii, Log, n_vars );
+    }
+  }
+  
+  // initialize latent variable: JJ ~ gamma()
+  arma::mat JJ( n_obs, n_cats );
+  JJ.zeros();
+  
+  // TT is the vector of normalization constants
+  arma::vec TT( n_obs );
+  TT.zeros();
+  
+  for( ii = 0 ; ii < n_obs ; ++ii ){
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      JJ( ii, jj ) =  YY( ii, jj );
+      // a very small number
+      if( JJ( ii, jj )  < pow(10.0, -100.0 ) ){
+        JJ( ii, jj ) = pow(10.0, -100.0);
+      }
+      TT[ ii ] = TT[ ii ] + JJ( ii, jj );
+    }
+  }
+  
+  // initialize the other clever latent variable: uu
+  // note that this uses the data to initialize
+  arma::vec uu( n_obs );
+  uu.zeros();
+  for(ii = 0 ; ii < n_obs ; ++ii){
+    uu[ ii ] = rgamma( 1, Ypiu[ ii ], 1/TT[ ii ])[ 0 ] ;
+  }
+
+  
+  arma::mat out_alpha( n_cats, floor( GG/thin ) ); 
+  arma::mat out_beta( n_cats*n_vars , floor( GG/thin ) ); 
+  
+  out_alpha.zeros();
+  out_beta.zeros();
+  
+  // the magic starts here
+  List between_return( 3 );
+  List beta_return( 2 );
+  List alpha_return( 3 );
+  
+  for( gg = 0 ; gg < GG ; ++gg ){
+    
+    // timing info to the printed output
+    // Print out progress
+    double printer = gg % 250;
+    
+    if( printer == 0 ){
+      Rcpp::Rcout << "Iteration = " << gg << std::endl;
+    }
+    
+    // first a round of the between-model step for every covariate within every taxa
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      
+      // fill in beta_temp
+      for( kk = 0 ; kk < n_vars ; ++kk ){
+        hh = kk + jj * n_vars;
+        beta_temp[ kk ] = beta[ hh ];
+      }
+      
+      between_return = help::between_models_jj(XX, JJ, loggamma, beta_temp,
+                                               inclusion_indicator, mu_be, sig_be, aa_hp, bb_hp, jj);
+      
+      beta_temp = as<arma::vec>( between_return[ 0 ] );
+      inclusion_indicator = as<arma::vec>( between_return[ 1 ] );
+      loggamma = as<arma::mat>( between_return[ 2 ] );
+      
+      // update beta with beta_temp
+      for(kk = 0 ; kk < n_vars ; kk++){
+        hh = kk + jj * n_vars;
+        beta[ hh ] = beta_temp[ kk ];
+      }
+      
+    }
+    
+    // now an accelerating within-model step
+    for( jj = 0 ; jj < n_cats ; ++jj ){
+      
+      // fill in beta_temp and update the proposal variance
+      for( kk = 0 ; kk < n_vars ; ++kk ){
+        hh = kk + jj * n_vars;
+        beta_temp[ kk ] = beta[ hh ];
+        
+        // wait until each parameter has had a few iterations
+        if(gg > 2 * n_vars * n_cats){
+          // calculate the online variance
+          last_mean = curr_mean[ hh ];
+          last_var = curr_var[ hh ];
+          curr_mean[ hh ] = help::online_mean( gg, last_mean, beta[ hh ] );
+          curr_var[ hh ] = help::online_var( gg, last_mean, last_var, curr_mean[ hh ], beta[ hh ] );
+          // update proposal variance
+          prop_per_beta[ hh ] = curr_var[ hh ];
+        }
+      }
+      
+      beta_return = help::update_beta_jj(XX, JJ, loggamma, beta_temp, inclusion_indicator,
+                                         prop_per_beta, mu_be, sig_be, aa_hp, bb_hp, jj, n_vars );
+      
+      beta_temp = as<arma::vec>( beta_return[ 0 ] );
+      loggamma = as<arma::mat>( beta_return[ 1 ] );
+      
+      // update beta with beta_temp and write to file
+      for( kk = 0 ; kk < n_vars ; ++kk){
+        hh = kk + jj * n_vars;
+        beta[ hh ] = beta_temp[ kk ];
+      }
+    }
+    
+    // update alpha and write to file
+    for( jj = 0 ; jj < n_cats ; ++jj){
+      alpha_return = help::update_alpha_jj(JJ, loggamma, alpha, prop_per_alpha,
+                                           mu_al, sig_al, jj);
+      alpha = as<arma::vec>( alpha_return[ 0 ] );
+      loggamma = as<arma::mat>( alpha_return[ 1 ] );
+      
+    } 
+    
+    // update JJ and consequently TT
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      TT[ ii ] = 0.0;
+      for( jj = 0 ; jj < n_cats ; ++jj ){
+        JJ( ii, jj ) = rgamma(1, YY( ii, jj ) + exp(loggamma( ii, jj )), 1/(uu[ii] + 1.0) )[ 0 ] ;
+        if(JJ( ii, jj ) < pow(10.0, -100.0)){
+          JJ( ii, jj ) = pow(10.0, -100.0);
+        }
+        TT[ ii ] = TT[ ii ] + JJ( ii, jj );
+      }
+    }
+    
+    // update latent variables uu
+    for( ii = 0 ; ii < n_obs ; ++ii ){
+      uu[ ii ] = rgamma( 1, Ypiu[ii], 1/TT[ ii ])[ 0 ];
+    }
+    
+    if( ( gg + 1 ) % thin == 0 ){
+      out_alpha.col( ( gg + 1 )/thin - 1  ) = alpha;
+      out_beta.col( ( gg + 1 )/thin - 1  ) = beta;
+    }
+    
+  } // end of iterations
+  
+  
+  // Return output
+  List output( 2 );
+  output[ 0 ] = out_alpha;
+  output[ 1 ] = out_beta;
+  
+  return output ;
+}
+// close Gibbs (stochastic search) sampler function
 
