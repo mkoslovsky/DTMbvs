@@ -41,9 +41,8 @@ selected_DM <- function( dm_obj = NULL, threshold = c( 0.5 ), plotting = FALSE, 
   B <- dim( dm_obj[[ 1 ]] )[ 1 ]
   P <- dim( dm_obj[[ 2 ]] )[ 1 ]/dim( dm_obj[[ 1 ]] )[ 1 ]
   
-  mppi <- rowMeans( (dm_obj[[2]][, burnin:len] != 0) + 0)
-  
-  selected_zeta <-  which( mppi >= threshold )
+  mppi <- rowMeans((dm_obj[[2]][, burnin:len] != 0) + 0)
+  selected_zeta <- which(t(matrix(mppi, nrow = P, ncol = B)) > threshold)
   
   # Plots of number of selected indices and PPI
   
